@@ -4,6 +4,11 @@ from langchain_community.document_loaders import DataFrameLoader
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain.chains.question_answering import load_qa_chain
 from langchain_community.vectorstores import FAISS
+import asyncio
+import nest_asyncio
+
+# Apply nest_asyncio to allow asyncio in Streamlit's environment
+nest_asyncio.apply()
 
 # O link do Google Drive para o arquivo CSV
 CSV_URL = 'https://drive.google.com/uc?export=download&id=1fYroWa2-jgWIp6vbeTXYfpN76ev8fxSv'
@@ -30,16 +35,34 @@ df = load_data(CSV_URL)
 
 # --- Configuração do LangChain ---
 @st.cache_resource
-def setup_langchain():
+def setup_langchain(_df):
     try:
         if "GEMINI_API_KEY" not in st.secrets:
-            st.error("Chave da API do Gemini não encontrada.")
+            st.error("Chave da API do Gemini não encontrada. Configure-a em st.secrets['GEMINI_API_KEY'].")
             return None, None
+        
+        # Initialize embeddings and LLM
         embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=st.secrets["GEMINI_API_KEY"])
         llm = ChatGoogleGenerativeAI(model="gemini-pro", google_api_key=st.secrets["GEMINI_API_KEY"])
-        loader = DataFrameLoader(df, page_content_column="page_content")
+
+        # Load documents
+        loader = DataFrameLoader(_df, page_content_column="page_content")
         docs = loader.load()
-        docsearch = FAISS.from_documents(docs, embeddings)
+
+        # Create FAISS index synchronously
+        try:
+            docsearch = FAISS.from_documents(docs, embeddings)
+        except RuntimeError as e:
+            if "event loop" in str(e).lower():
+                # Run async operation in a new event loop
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                docsearch = loop.run_until_complete(asyncio.to_thread(FAISS.from_documents, docs, embeddings))
+                loop.close()
+            else:
+                raise e
+
+        # Initialize QA chain
         chain = load_qa_chain(llm, chain_type="stuff")
         return docsearch, chain
     except Exception as e:
@@ -47,7 +70,7 @@ def setup_langchain():
         return None, None
 
 if df is not None:
-    docsearch, chain = setup_langchain()
+    docsearch, chain = setup_langchain(df)
     if docsearch is None or chain is None:
         st.error("Falha na inicialização do LangChain. Verifique a chave da API ou os dados carregados.")
     else:

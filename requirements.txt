@@ -1,5 +1,6 @@
 streamlit
 pandas
 scikit-learn
+sentence-transformers
 transformers
 torch

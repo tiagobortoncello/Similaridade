@@ -1,6 +1,6 @@
 streamlit
 pandas
 scikit-learn
-sentence-transformers
-transformers
-torch
+langchain
+langchain-google-genai
+faiss-cpu

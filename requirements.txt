@@ -1,8 +1,8 @@
 streamlit
 pandas
-scikit-learn
-openai
 langchain
 langchain-google-genai
 faiss-cpu
-langchain-community # <--- Adicione esta linha
+langchain-community
+sentence-transformers
+torch

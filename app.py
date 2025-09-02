@@ -27,13 +27,9 @@ def load_data(file_url):
 df = load_data(CSV_URL)
 
 # --- Configuração do LangChain ---
-# Use o cache para evitar inicializar os clientes da API a cada interação
-@st.cache_resource
+# O @st.cache_resource foi removido para evitar erros com a API
 def setup_langchain():
-    # Usa o modelo de embeddings do Gemini. Isso é rápido pois usa a API.
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=st.secrets["GEMINI_API_KEY"])
-    
-    # Usa o modelo generativo do Gemini. Isso também é rápido.
     llm = ChatGoogleGenerativeAI(model="gemini-pro", google_api_key=st.secrets["GEMINI_API_KEY"])
 
     loader = DataFrameLoader(df, page_content_column="page_content")

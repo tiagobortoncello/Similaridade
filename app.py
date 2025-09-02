@@ -1,26 +1,24 @@
 import streamlit as st
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from transformers import pipeline
+from transformers import pipeline, T5Tokenizer, T5ForConditionalGeneration
+from sentence_transformers import SentenceTransformer
 import torch
+import numpy as np
 
-# Verifique se o PyTorch está instalado corretamente
-if not torch.cuda.is_available():
-    st.info("Atenção: Não há GPU disponível. O modelo de resumo pode ser lento.")
-
-# Link do Google Drive para o seu arquivo CSV
+# O link do Google Drive para o seu arquivo CSV
 CSV_URL = 'https://drive.google.com/uc?export=download&id=1fYroWa2-jgWIp6vbeTXYfpN76ev8fxSv'
 
-st.title('Gerador de Resumo Generativo e Indexação')
-st.write('Cole um texto para gerar um resumo e encontrar os termos de indexação mais adequados.')
+# Título da aplicação
+st.title('Gerador de Resumo e Indexação (Sem API)')
+st.write('Cole um texto para gerar um resumo e encontrar os termos de indexação mais adequados, tudo com modelos de código aberto.')
 
-# --- Carregamento dos Dados ---
+# --- Carregamento e Preparação dos Dados ---
 @st.cache_data
 def load_data(file_url):
     try:
         df = pd.read_csv(file_url)
-        df['texto_completo'] = df['resumo'].fillna('') + ' ' + df['texto'].fillna('')
+        # Use o 'texto' como a fonte de conhecimento para o resumo
+        df['page_content'] = df['texto'].fillna('')
         return df
     except Exception as e:
         st.error(f'Erro ao carregar o arquivo de dados da URL: {e}')
@@ -28,47 +26,62 @@ def load_data(file_url):
 
 df = load_data(CSV_URL)
 
-# --- Carregamento do Modelo Generativo ---
-# Use @st.cache_resource para modelos de ML para evitar recarregar
+# --- Carregamento dos Modelos ---
 @st.cache_resource
-def load_summarizer_model():
-    # Modelos maiores como 't5-large' podem não funcionar no Streamlit Cloud gratuito
-    try:
-        summarizer = pipeline("summarization", model="t5-small", framework="pt")
-        return summarizer
-    except Exception as e:
-        st.error(f"Erro ao carregar o modelo de resumo: {e}")
-        return None
+def load_models():
+    # Modelo para criar embeddings e buscar similaridade
+    # 'distilbert-base-nli-stsb-mean-tokens' é um modelo pequeno e eficiente
+    embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+    # Modelo para resumo generativo
+    # 't5-small' é um modelo pequeno que tem mais chance de rodar no Streamlit Cloud gratuito
+    summarizer_tokenizer = T5Tokenizer.from_pretrained("t5-small")
+    summarizer_model = T5ForConditionalGeneration.from_pretrained("t5-small")
+
+    return embedding_model, summarizer_tokenizer, summarizer_model
 
 if df is not None:
-    summarizer = load_summarizer_model()
+    embedding_model, summarizer_tokenizer, summarizer_model = load_models()
     
-    # Cria o vetorizador para a busca dos termos de indexação
-    vectorizer = TfidfVectorizer(stop_words=None) 
-    tfidf_matrix = vectorizer.fit_transform(df['texto_completo'])
+    # 1. Pré-processa todos os textos do CSV para a busca por similaridade
+    # st.cache_data armazena os embeddings para que não sejam gerados novamente
+    @st.cache_data
+    def get_embeddings(texts):
+        return embedding_model.encode(texts, convert_to_tensor=True)
 
+    corpus_embeddings = get_embeddings(df['page_content'].tolist())
+    
     # --- Interface do Usuário ---
     user_text = st.text_area('Cole o seu texto aqui:', height=200)
 
     if st.button('Gerar Sugestões'):
-        if user_text and summarizer:
-            # 1. Geração do Resumo (Tarefa Generativa)
-            # Defina o max_length para controlar o tamanho do resumo
-            generated_summary = summarizer(user_text, max_length=150, min_length=30, do_sample=False)[0]['summary_text']
-            
-            # 2. Busca de Termos de Indexação (Tarefa de Similaridade)
-            user_text_vector = vectorizer.transform([user_text])
-            cosine_similarities = cosine_similarity(user_text_vector, tfidf_matrix).flatten()
-            most_similar_index = cosine_similarities.argmax()
+        if user_text:
+            # 2. Busca de Contexto (Recuperação)
+            # Encontra o texto mais similar no CSV para usar como contexto
+            query_embedding = embedding_model.encode(user_text, convert_to_tensor=True)
+            similarities = torch.nn.functional.cosine_similarity(query_embedding.unsqueeze(0), corpus_embeddings, dim=1)
+            most_similar_index = similarities.argmax().item()
             most_similar_row = df.iloc[most_similar_index]
+            
+            # Pega o contexto do CSV
+            context_text = most_similar_row['page_content']
+
+            # 3. Geração do Resumo (Generativo com Hugging Face)
+            # Constrói o prompt para o modelo T5
+            prompt = f"summarize: {context_text}"
+            inputs = summarizer_tokenizer.encode(prompt, return_tensors='pt', max_length=512, truncation=True)
+            
+            # Gera o resumo
+            outputs = summarizer_model.generate(inputs, max_length=150, min_length=40, length_penalty=2.0, num_beams=4, early_stopping=True)
+            generated_summary = summarizer_tokenizer.decode(outputs[0], skip_special_tokens=True)
 
             st.success('Sugestões geradas com sucesso!')
-
+            
             # Exibe o resumo gerado
             st.subheader('Resumo Gerado')
             st.write(generated_summary)
-                
-            # Exibe os termos de indexação encontrados
+            
+            # Exibe os termos de indexação encontrados (usando o mesmo índice)
             st.subheader('Termos de Indexação Sugeridos')
             if pd.isna(most_similar_row['termos de indexação']):
                 st.write('Não há termos de indexação disponíveis para a entrada mais similar.')
@@ -76,6 +89,6 @@ if df is not None:
                 st.write(most_similar_row['termos de indexação'])
 
             st.markdown("---")
-            st.info(f"Pontuação de similaridade para os termos: **{cosine_similarities[most_similar_index]:.2f}**")
+            st.info(f"Pontuação de similaridade para os termos: **{similarities[most_similar_index]:.2f}**")
         else:
             st.warning('Por favor, cole um texto na área acima para continuar.')

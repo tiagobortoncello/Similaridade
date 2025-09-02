@@ -17,6 +17,7 @@ st.write('Cole um texto para gerar um resumo baseado no nosso banco de dados.')
 def load_data(file_url):
     try:
         df = pd.read_csv(file_url)
+        # Combina as colunas para o modelo usar como contexto
         df['page_content'] = df['resumo'].fillna('') + ' ' + df['texto'].fillna('')
         return df
     except Exception as e:
@@ -26,11 +27,9 @@ def load_data(file_url):
 df = load_data(CSV_URL)
 
 # --- Configuração do LangChain ---
-@st.cache_resource
+# O @st.cache_resource foi removido para evitar erros com a API
 def setup_langchain():
-    # Use o GoogleGenerativeAIEmbeddings para os embeddings
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=st.secrets["GEMINI_API_KEY"])
-    # Use o ChatGoogleGenerativeAI para o resumo
     llm = ChatGoogleGenerativeAI(model="gemini-pro", google_api_key=st.secrets["GEMINI_API_KEY"])
 
     loader = DataFrameLoader(df, page_content_column="page_content")
@@ -50,8 +49,10 @@ if df is not None:
     if st.button('Gerar Sugestão'):
         if user_text:
             try:
+                # Busca de Contexto no CSV (Recuperação)
                 docs = docsearch.similarity_search(user_text)
                 
+                # Geração do Resumo (Generativo)
                 prompt = "Gere um resumo do seguinte texto, usando o contexto fornecido para ser mais preciso: "
                 response = chain.invoke({"input_documents": docs, "question": prompt + user_text})
                 

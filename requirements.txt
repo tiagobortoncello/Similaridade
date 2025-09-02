@@ -2,7 +2,5 @@ streamlit
 pandas
 langchain
 langchain-google-genai
-faiss-cpu
 langchain-community
-sentence-transformers
-torch
+faiss-cpu
